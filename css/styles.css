@@ -348,14 +348,63 @@ select.q__input { cursor: pointer; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
-  .layout { grid-template-columns: 200px minmax(0,1fr); }
+  .layout { grid-template-columns: 200px minmax(0, 1fr); }
+  .layout.dock-collapsed { grid-template-columns: 200px minmax(0, 1fr); }
   .dock { display: none; }
+  .module { padding: 22px 24px 8px; }
 }
+
+@media (max-width: 860px) {
+  .topbar { padding: 10px 14px; gap: 10px; }
+  .topbar__actions { flex-wrap: wrap; justify-content: flex-end; }
+  .module__title { font-size: 22px; }
+}
+
 @media (max-width: 720px) {
-  .layout { grid-template-columns: 1fr; }
-  .rail { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); }
-  .rail__item { flex: 0 0 auto; }
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .rail {
+    flex-direction: row; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    border-right: none; border-bottom: 1px solid var(--border);
+    padding: 8px; gap: 6px;
+  }
+  .rail__item { flex: 0 0 auto; padding: 7px 10px; }
+  .rail__sub { display: none; }
+  .rail__title { font-size: 12.5px; }
+
   .topbar { flex-wrap: wrap; }
-  .engagement input { width: 150px; }
-  .module { padding: 18px; }
+  .topbar__brand { flex: 1 1 auto; min-width: 0; }
+  .topbar__titles h1 { font-size: 14px; }
+  .topbar__titles p { font-size: 11px; }
+  .topbar__actions { width: 100%; gap: 6px; }
+  .engagement { flex: 1 1 100%; order: -1; }
+  .engagement input { width: 100%; }
+
+  .tabs { overflow-x: auto; flex-wrap: nowrap; }
+  .tab { white-space: nowrap; padding: 10px 12px; }
+
+  .module { padding: 16px 16px 6px; }
+  .module-nav { padding: 12px 16px; gap: 10px; }
+  .prose, .module__tagline { max-width: none; }
+  .calc, .gencard { padding: 14px; overflow-x: auto; }
+
+  .library { top: 8px; right: 8px; left: 8px; width: auto; }
+}
+
+@media (max-width: 520px) {
+  .topbar__actions .btn { padding: 7px 10px; font-size: 12px; }
+  .module__title { font-size: 20px; }
+  .module__tagline { font-size: 13.5px; }
+  .progress { padding: 8px 14px; }
+  .progress__label { font-size: 11px; }
+
+  .gencard__row { gap: 8px; }
+  .gencard__select { max-width: none; width: 100%; }
+  .gencard__row .btn, .report__actions .btn, .modal__actions .btn { flex: 1 1 auto; text-align: center; }
+
+  .calc__ex, .calc__ex-th { display: none; }
+
+  .modal-overlay { padding: 14px 10px; }
+  .modal { padding: 16px; }
+  .modal__grid { grid-template-columns: 1fr; }
+  .module-nav__meta { display: none; }
 }
