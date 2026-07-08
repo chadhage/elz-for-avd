@@ -126,8 +126,7 @@
     const total = (mod.currentState.length + mod.toBeState.length);
     let done = 0;
     ["currentState", "toBeState"].forEach(phase => {
-      const store = (state.answers[mod.id] && state.answers[mod.id][phase]) || {};
-      mod[phase].forEach(q => { if (isAnswered(store[q.id])) done++; });
+      mod[phase].forEach(q => { if (isAnswered(effectiveValue(mod, phase, q))) done++; });
     });
     return { done, total };
   }
@@ -136,6 +135,36 @@
     if (v == null) return false;
     if (Array.isArray(v)) return v.length > 0;
     return String(v).trim() !== "";
+  }
+
+  /* Prepopulation: a target question may declare `default` (a static assumed
+   * value) or `inheritFrom` (carry the matching current-state answer forward).
+   * These provide parity with the Current State tab while letting the facilitator
+   * override anything that actually changes. */
+  function phaseStore(modId, phase) {
+    return (state.answers[modId] && state.answers[modId][phase]) || {};
+  }
+
+  function resolveDefault(mod, q) {
+    if (q.inheritFrom) {
+      const cs = phaseStore(mod.id, "currentState");
+      const v = cs[q.inheritFrom];
+      if (v != null && !(Array.isArray(v) && v.length === 0) && String(v).trim() !== "") return v;
+    }
+    if (q.default !== undefined) return q.default;
+    return undefined;
+  }
+
+  function effectiveValue(mod, phase, q) {
+    const store = phaseStore(mod.id, phase);
+    if (Object.prototype.hasOwnProperty.call(store, q.id)) return store[q.id];
+    return resolveDefault(mod, q);
+  }
+
+  function isPrepopulated(mod, phase, q) {
+    const store = phaseStore(mod.id, phase);
+    if (Object.prototype.hasOwnProperty.call(store, q.id)) return false;
+    return resolveDefault(mod, q) !== undefined;
   }
 
   function updateProgress() {
@@ -203,23 +232,30 @@
     num.textContent = questionRef(mod, phase, index);
     label.appendChild(num);
     label.appendChild(document.createTextNode(q.label));
+    if (isPrepopulated(mod, phase, q)) {
+      const pf = el("span", "q__prefill");
+      pf.textContent = q.inheritFrom ? "prefilled from current" : "prefilled (assumed)";
+      pf.title = "Prepopulated with the assumed steady-state value. Edit to change.";
+      label.appendChild(pf);
+    }
     wrap.appendChild(label);
     if (q.help) { const h = el("p", "q__help"); h.textContent = q.help; wrap.appendChild(h); }
 
     const name = mod.id + "-" + phase + "-" + q.id;
+    const initial = effectiveValue(mod, phase, q);
     const commit = (val) => { store[q.id] = val; save(true); updateProgress(); renderRail(); markPhaseMeta(mod); };
 
     if (q.type === "text") {
       const inp = el("input", "q__input", { type: "text", id: name });
       if (q.placeholder) inp.placeholder = q.placeholder;
-      inp.value = store[q.id] || "";
+      inp.value = initial || "";
       inp.addEventListener("input", () => commit(inp.value));
       wrap.appendChild(inp);
 
     } else if (q.type === "textarea") {
       const ta = el("textarea", "q__input q__textarea", { id: name, rows: "3" });
       if (q.placeholder) ta.placeholder = q.placeholder;
-      ta.value = store[q.id] || "";
+      ta.value = initial || "";
       ta.addEventListener("input", () => commit(ta.value));
       wrap.appendChild(ta);
 
@@ -227,7 +263,7 @@
       const sel = el("select", "q__input", { id: name });
       const ph = el("option"); ph.value = ""; ph.textContent = "— select —"; sel.appendChild(ph);
       q.options.forEach(o => { const op = el("option"); op.value = o; op.textContent = o; sel.appendChild(op); });
-      sel.value = store[q.id] || "";
+      sel.value = initial || "";
       sel.addEventListener("change", () => commit(sel.value));
       wrap.appendChild(sel);
 
@@ -237,7 +273,7 @@
         const id = name + "-" + slug(o);
         const opt = el("label", "opt");
         const r = el("input", null, { type: "radio", name: name, id: id });
-        r.value = o; if (store[q.id] === o) r.checked = true;
+        r.value = o; if (initial === o) r.checked = true;
         r.addEventListener("change", () => commit(o));
         opt.appendChild(r); opt.appendChild(document.createTextNode(o));
         group.appendChild(opt);
@@ -246,13 +282,14 @@
 
     } else if (q.type === "checkbox") {
       const group = el("div", "q__options");
-      const current = Array.isArray(store[q.id]) ? store[q.id].slice() : [];
+      const current = Array.isArray(initial) ? initial.slice() : [];
       q.options.forEach(o => {
         const opt = el("label", "opt");
         const c = el("input", null, { type: "checkbox" });
         c.value = o; if (current.indexOf(o) > -1) c.checked = true;
         c.addEventListener("change", () => {
-          const arr = Array.isArray(store[q.id]) ? store[q.id].slice() : [];
+          const arr = Array.isArray(store[q.id]) ? store[q.id].slice()
+            : (Array.isArray(initial) ? initial.slice() : []);
           const idx = arr.indexOf(o);
           if (c.checked && idx === -1) arr.push(o);
           if (!c.checked && idx > -1) arr.splice(idx, 1);
@@ -272,9 +309,8 @@
     // update the little "answered" counters on phase headers if present
     document.querySelectorAll("[data-phase-meta]").forEach(node => {
       const phase = node.getAttribute("data-phase-meta");
-      const store = (state.answers[mod.id] && state.answers[mod.id][phase]) || {};
       const total = mod[phase].length;
-      let done = 0; mod[phase].forEach(q => { if (isAnswered(store[q.id])) done++; });
+      let done = 0; mod[phase].forEach(q => { if (isAnswered(effectiveValue(mod, phase, q))) done++; });
       node.textContent = done + "/" + total;
     });
   }
@@ -391,7 +427,12 @@
     const store = (state.answers[mod.id] && state.answers[mod.id][phase]) || {};
     const obj = {};
     mod[phase].forEach((q, i) => {
-      obj[q.id] = { ref: questionRef(mod, phase, i), label: q.label, value: store[q.id] != null ? store[q.id] : (q.type === "checkbox" ? [] : "") };
+      const explicit = Object.prototype.hasOwnProperty.call(store, q.id);
+      const value = explicit ? store[q.id]
+        : (resolveDefault(mod, q) != null ? resolveDefault(mod, q) : (q.type === "checkbox" ? [] : ""));
+      const entry = { ref: questionRef(mod, phase, i), label: q.label, value: value };
+      if (!explicit && resolveDefault(mod, q) !== undefined) entry.prepopulated = true;
+      obj[q.id] = entry;
     });
     return obj;
   }
