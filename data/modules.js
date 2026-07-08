@@ -178,6 +178,7 @@ Cross-tenant and cross-cloud collaboration (commercial to GCC High) is restricte
     minutes: 30,
     icon: "◇",
     tagline: "Hub-spoke vs. Virtual WAN, private endpoints, RDP Shortpath, egress control, and Gov-region reachability.",
+    tool: "bandwidth",
     intro: `
 ## Design area: Network Topology & Connectivity
 
@@ -206,7 +207,10 @@ The AVD control plane is a Microsoft-managed reverse-connect service: session ho
       { title: "RDP Shortpath", url: "https://learn.microsoft.com/en-us/azure/virtual-desktop/rdp-shortpath", note: "UDP transport for managed/public networks." },
       { title: "AVD private link", url: "https://learn.microsoft.com/en-us/azure/virtual-desktop/private-link-overview", note: "Private control-plane connectivity." },
       { title: "CAF — network topology & connectivity", url: "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/landing-zone/design-area/network-topology-and-connectivity", note: "Hub-spoke vs vWAN decisioning." },
-      { title: "Azure Government — ExpressRoute", url: "https://learn.microsoft.com/en-us/azure/azure-government/documentation-government-plan-network-architecture", note: "Gov peering & connectivity." }
+      { title: "Azure Government — ExpressRoute", url: "https://learn.microsoft.com/en-us/azure/azure-government/documentation-government-plan-network-architecture", note: "Gov peering & connectivity." },
+      { title: "RDP bandwidth requirements", url: "https://learn.microsoft.com/en-us/azure/virtual-desktop/rdp-bandwidth", note: "Per-application RDP data-rate estimates." },
+      { title: "Network guidelines — per-workload bandwidth", url: "https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/network-guidance", note: "Light/Medium/Heavy/Power Mbps table — drives the estimator." },
+      { title: "AVD Experience Estimator", url: "https://azure.microsoft.com/en-us/products/virtual-desktop/assessment/", note: "Round-trip latency (RTT) to Gov regions." }
     ],
     currentState: [
       { id: "net_topology_today", type: "radio", label: "Current Azure network topology", options: ["None (greenfield)", "Single VNet / flat", "Hub-spoke (NVA/Azure Firewall)", "Virtual WAN", "Third-party NVA"] },

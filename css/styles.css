@@ -255,6 +255,48 @@ select.q__input { cursor: pointer; }
   background: var(--border); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box;
 }
 
+/* ---------- Bandwidth estimator ---------- */
+.calc {
+  margin: 22px 0 4px; max-width: 780px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px;
+}
+.calc__head { margin-bottom: 12px; }
+.calc__title { margin: 0 0 4px; font-size: 15px; color: var(--accent); }
+.calc__sub { margin: 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.55; }
+.calc__sub a { color: var(--accent); }
+.calc__table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px; }
+.calc__table th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-dim); font-weight: 700; padding: 6px 8px; border-bottom: 1px solid var(--border);
+}
+.calc__table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.calc__table tr:last-child td { border-bottom: none; }
+.calc__num { text-align: right; white-space: nowrap; }
+.calc__wl { font-weight: 600; }
+.calc__ex, .calc__ex-th { color: var(--text-dim); font-size: 12px; }
+.calc__table .calc__subtotal { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+.calc__input {
+  width: 100%; max-width: 110px; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 9px; border-radius: var(--radius-sm); font-size: 13px; font-family: var(--font); text-align: right;
+}
+.calc__input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.calc__controls { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; }
+.calc__ctrl { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.calc__ctrl-label { font-weight: 600; }
+.calc__ctrl .calc__input { max-width: 140px; text-align: left; }
+.calc__results {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px;
+}
+.calc__metric {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 4px;
+}
+.calc__metric--accent { border-color: var(--accent); background: var(--panel-2); }
+.calc__metric-value { font-size: 20px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.calc__metric--accent .calc__metric-value { color: var(--accent); }
+.calc__metric-label { font-size: 11.5px; color: var(--text-dim); line-height: 1.35; }
+.calc__note { margin: 0; font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 200px minmax(0,1fr); }

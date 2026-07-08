@@ -18,6 +18,7 @@
     engagement: "",
     activeIndex: 0,
     answers: {}, // answers[moduleId][phase][questionId] = value
+    tools: {},   // tools[toolId] = { ...toolState } (e.g. bandwidth estimator)
     updatedAt: null
   };
 
@@ -47,6 +48,7 @@
       const parsed = JSON.parse(raw);
       state.engagement = parsed.engagement || "";
       state.answers = parsed.answers || {};
+      state.tools = parsed.tools || {};
       state.activeIndex = parsed.activeIndex || 0;
       state.updatedAt = parsed.updatedAt || null;
     } catch (_) { /* ignore corrupt storage */ }
@@ -362,6 +364,7 @@
       const intro = el("div", "prose");
       intro.innerHTML = renderMarkdown(mod.intro);
       pOverview.appendChild(intro);
+      if (mod.tool === "bandwidth") pOverview.appendChild(renderBandwidthCalculator());
       panels.appendChild(pOverview);
 
       // Current state panel
@@ -392,6 +395,133 @@
     mod[phase].forEach((q, i) => form.appendChild(renderQuestion(mod, phase, q, i)));
     panel.appendChild(form);
     return panel;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Bandwidth estimator (Network module Overview panel)
+   * Per-user rates are Microsoft's recommended values for a single 1080p
+   * monitor at 30 fps (Network guidelines / Remote Desktop workloads).
+   * ---------------------------------------------------------------------- */
+  const BANDWIDTH_PROFILES = [
+    { key: "light",  label: "Light",  mbps: 1.5, example: "Data entry, CLI, basic LOB apps" },
+    { key: "medium", label: "Medium", mbps: 3,   example: "Word, static web, consultants" },
+    { key: "heavy",  label: "Heavy",  mbps: 5,   example: "Outlook, PowerPoint, dynamic web, dev" },
+    { key: "power",  label: "Power",  mbps: 15,  example: "CAD/CAM, 3D, photo/video edit, ML" }
+  ];
+
+  function fmtBandwidth(mbps) {
+    if (!mbps) return "0 Mbps";
+    if (mbps >= 1000) return (Math.round(mbps / 100) / 10) + " Gbps";
+    return (Math.round(mbps * 10) / 10) + " Mbps";
+  }
+
+  function renderBandwidthCalculator() {
+    state.tools = state.tools || {};
+    const data = state.tools.bandwidth = state.tools.bandwidth || {};
+    data.counts = data.counts || {};
+    if (typeof data.monitors !== "number") data.monitors = 1;
+    if (typeof data.headroom !== "number") data.headroom = 20;
+
+    const wrap = el("section", "calc");
+
+    const head = el("div", "calc__head");
+    head.innerHTML =
+      '<h3 class="calc__title">Bandwidth estimator</h3>' +
+      '<p class="calc__sub">Estimates aggregate network bandwidth for a host pool at peak concurrency. ' +
+      'Per-user rates are Microsoft\u2019s recommended values for a single 1080p monitor at 30&nbsp;fps ' +
+      '(<a href="https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/network-guidance" target="_blank" rel="noopener noreferrer">Network guidelines</a>). ' +
+      'Real usage varies with resolution, frame rate, and codec \u2014 see ' +
+      '<a href="https://learn.microsoft.com/en-us/azure/virtual-desktop/rdp-bandwidth" target="_blank" rel="noopener noreferrer">RDP bandwidth requirements</a>.</p>';
+    wrap.appendChild(head);
+
+    const table = el("table", "calc__table");
+    const thead = el("thead");
+    thead.innerHTML = '<tr><th>Workload</th><th class="calc__ex-th">Example</th>' +
+      '<th class="calc__num">Per user</th><th class="calc__num">Concurrent users</th>' +
+      '<th class="calc__num">Subtotal</th></tr>';
+    table.appendChild(thead);
+    const tbody = el("tbody");
+
+    const subCells = {};
+    let rawOut, headOut, perUserOut, usersOut;
+
+    function recompute() {
+      let raw = 0, users = 0;
+      BANDWIDTH_PROFILES.forEach(p => {
+        const n = Math.max(0, parseInt(data.counts[p.key], 10) || 0);
+        const sub = n * p.mbps * data.monitors;
+        raw += sub; users += n;
+        if (subCells[p.key]) subCells[p.key].textContent = fmtBandwidth(sub);
+      });
+      const withHead = raw * (1 + data.headroom / 100);
+      if (rawOut) rawOut.textContent = fmtBandwidth(raw);
+      if (headOut) headOut.textContent = fmtBandwidth(withHead);
+      if (perUserOut) perUserOut.textContent = users > 0 ? fmtBandwidth(raw / users) : "\u2014";
+      if (usersOut) usersOut.textContent = users.toLocaleString();
+      save(true);
+    }
+
+    BANDWIDTH_PROFILES.forEach(p => {
+      const tr = el("tr");
+      const tdName = el("td", "calc__wl"); tdName.textContent = p.label;
+      const tdEx = el("td", "calc__ex"); tdEx.textContent = p.example;
+      const tdRate = el("td", "calc__num"); tdRate.textContent = p.mbps + " Mbps";
+      const tdIn = el("td", "calc__num");
+      const inp = el("input", "calc__input", { type: "number", min: "0", step: "1", inputmode: "numeric" });
+      inp.placeholder = "0";
+      inp.value = (data.counts[p.key] != null) ? data.counts[p.key] : "";
+      inp.addEventListener("input", () => { data.counts[p.key] = inp.value; recompute(); });
+      tdIn.appendChild(inp);
+      const tdSub = el("td", "calc__num calc__subtotal"); tdSub.textContent = "0 Mbps";
+      subCells[p.key] = tdSub;
+      tr.appendChild(tdName); tr.appendChild(tdEx); tr.appendChild(tdRate);
+      tr.appendChild(tdIn); tr.appendChild(tdSub);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    const controls = el("div", "calc__controls");
+    function control(labelText, value, min, step, onChange) {
+      const lab = el("label", "calc__ctrl");
+      const span = el("span", "calc__ctrl-label"); span.textContent = labelText;
+      const inp = el("input", "calc__input", { type: "number", min: String(min), step: String(step), inputmode: "numeric" });
+      inp.value = value;
+      inp.addEventListener("input", () => onChange(inp));
+      lab.appendChild(span); lab.appendChild(inp);
+      controls.appendChild(lab);
+    }
+    control("Monitors per user", data.monitors, 1, 1, (inp) => {
+      data.monitors = Math.max(1, parseInt(inp.value, 10) || 1); recompute();
+    });
+    control("Headroom %", data.headroom, 0, 5, (inp) => {
+      data.headroom = Math.max(0, parseInt(inp.value, 10) || 0); recompute();
+    });
+    wrap.appendChild(controls);
+
+    const results = el("div", "calc__results");
+    function metric(labelText, accent) {
+      const m = el("div", "calc__metric" + (accent ? " calc__metric--accent" : ""));
+      const v = el("strong", "calc__metric-value"); v.textContent = "\u2014";
+      const l = el("span", "calc__metric-label"); l.textContent = labelText;
+      m.appendChild(v); m.appendChild(l);
+      results.appendChild(m);
+      return v;
+    }
+    usersOut = metric("Concurrent users");
+    rawOut = metric("Raw aggregate at peak");
+    headOut = metric("Plan-for capacity (with headroom)", true);
+    perUserOut = metric("Average per active user");
+    wrap.appendChild(results);
+
+    const note = el("p", "calc__note");
+    note.textContent = "Multi-monitor scaling is a linear approximation. Add capacity for voice/video " +
+      "conferencing, 4K video, and bulk file transfers, and validate with real-user monitoring and " +
+      "load tests before sizing circuits. Estimates are planning aids, not a substitute for measured bandwidth.";
+    wrap.appendChild(note);
+
+    recompute();
+    return wrap;
   }
 
   /* ---------------------------------------------------------------------- *
