@@ -8,6 +8,7 @@
 
   const MODULES = (window.WORKSHOP_MODULES || []).slice().sort((a, b) => a.order - b.order);
   const STORAGE_KEY = "avd-gcch-lza-assessment.v1";
+  const LIBRARY_KEY = "avd-gcch-lza-assessment.library.v1";
   const SCHEMA_VERSION = "1.0.0";
 
   /* ---------------------------------------------------------------------- *
@@ -708,6 +709,104 @@
   }
 
   /* ---------------------------------------------------------------------- *
+   * Saved-workshop library (named, multi-slot, stored in this browser)
+   * ---------------------------------------------------------------------- */
+  function loadLibrary() {
+    try { return JSON.parse(localStorage.getItem(LIBRARY_KEY) || "[]") || []; }
+    catch (_) { return []; }
+  }
+  function persistLibrary(lib) {
+    try { localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib)); }
+    catch (e) { toast("Could not save library: " + e.message, true); }
+  }
+
+  function saveToLibrary() {
+    let name = (state.engagement || "").trim();
+    if (!name) {
+      name = (window.prompt("Name this workshop:", "") || "").trim();
+      if (!name) { toast("Save cancelled \u2014 a name is required", true); return; }
+      state.engagement = name;
+      $("#engagementName").value = name;
+    }
+    const lib = loadLibrary();
+    const snap = JSON.parse(JSON.stringify({ engagement: state.engagement, activeIndex: state.activeIndex, answers: state.answers }));
+    const now = new Date().toISOString();
+    const existing = lib.find(w => (w.name || "").toLowerCase() === name.toLowerCase());
+    if (existing) { existing.savedAt = now; existing.data = snap; }
+    else { lib.push({ id: "w" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: name, savedAt: now, data: snap }); }
+    persistLibrary(lib);
+    save(true);
+    toast("Saved \u201C" + name + "\u201D to this browser");
+  }
+
+  function newWorkshop() {
+    const ok = window.confirm("Start a new workshop?\n\nThis clears the current working copy. Use Save to keep it in this browser, or Export it first, if you don't want to lose it.");
+    if (!ok) return;
+    state.engagement = "";
+    state.activeIndex = 0;
+    state.answers = {};
+    state.updatedAt = null;
+    $("#engagementName").value = "";
+    save(true);
+    renderRail(); renderModule(); updateProgress();
+    toast("Started a new workshop");
+  }
+
+  function openWorkshop(id) {
+    const w = loadLibrary().find(x => x.id === id);
+    if (!w) { toast("Workshop not found", true); return; }
+    const d = w.data || {};
+    state.engagement = d.engagement || w.name || "";
+    state.activeIndex = d.activeIndex || 0;
+    state.answers = d.answers ? JSON.parse(JSON.stringify(d.answers)) : {};
+    $("#engagementName").value = state.engagement;
+    save(true);
+    renderRail(); renderModule(); updateProgress();
+    hideLibrary();
+    toast("Opened \u201C" + w.name + "\u201D");
+  }
+
+  function deleteWorkshop(id) {
+    const lib = loadLibrary();
+    const w = lib.find(x => x.id === id);
+    if (!w) return;
+    if (!window.confirm("Delete \u201C" + w.name + "\u201D from this browser? This cannot be undone.")) return;
+    persistLibrary(lib.filter(x => x.id !== id));
+    renderLibrary();
+    toast("Deleted \u201C" + w.name + "\u201D");
+  }
+
+  function renderLibrary() {
+    const list = $("#libraryList");
+    list.innerHTML = "";
+    const lib = loadLibrary().slice().sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""));
+    if (!lib.length) {
+      const empty = el("p", "library__empty");
+      empty.textContent = "No saved workshops yet. Use Save to store one in this browser.";
+      list.appendChild(empty);
+      return;
+    }
+    lib.forEach(w => {
+      const row = el("div", "library__item");
+      const open = el("button", "library__open", { type: "button" });
+      const nm = el("span", "library__name"); nm.textContent = w.name;
+      const meta = el("span", "library__meta");
+      meta.textContent = "Saved " + (w.savedAt ? new Date(w.savedAt).toLocaleString() : "");
+      open.appendChild(nm); open.appendChild(meta);
+      open.addEventListener("click", () => openWorkshop(w.id));
+      const del = el("button", "library__del", { type: "button", title: "Delete", "aria-label": "Delete " + w.name });
+      del.textContent = "\u2715";
+      del.addEventListener("click", (e) => { e.stopPropagation(); deleteWorkshop(w.id); });
+      row.appendChild(open); row.appendChild(del);
+      list.appendChild(row);
+    });
+  }
+
+  function showLibrary() { renderLibrary(); $("#libraryPanel").hidden = false; }
+  function hideLibrary() { const p = $("#libraryPanel"); if (p) p.hidden = true; }
+  function toggleLibrary() { const p = $("#libraryPanel"); if (p.hidden) showLibrary(); else hideLibrary(); }
+
+  /* ---------------------------------------------------------------------- *
    * Toast
    * ---------------------------------------------------------------------- */
   let toastTimer;
@@ -727,10 +826,19 @@
     $("#engagementName").value = state.engagement || "";
     $("#engagementName").addEventListener("input", (e) => { state.engagement = e.target.value; save(true); });
 
-    $("#btnSave").addEventListener("click", () => save(false));
+    $("#btnNew").addEventListener("click", newWorkshop);
+    $("#btnSave").addEventListener("click", saveToLibrary);
+    $("#btnOpen").addEventListener("click", toggleLibrary);
+    $("#libraryClose").addEventListener("click", hideLibrary);
     $("#btnExport").addEventListener("click", exportJson);
     $("#btnImport").addEventListener("click", () => $("#importFile").click());
     $("#importFile").addEventListener("change", (e) => { if (e.target.files[0]) importJson(e.target.files[0]); e.target.value = ""; });
+    document.addEventListener("click", (e) => {
+      const p = $("#libraryPanel");
+      if (!p || p.hidden) return;
+      if (p.contains(e.target) || e.target.id === "btnOpen") return;
+      hideLibrary();
+    });
     $("#btnPrev").addEventListener("click", () => goTo(state.activeIndex - 1));
     $("#btnNext").addEventListener("click", () => goTo(state.activeIndex + 1));
 
@@ -750,6 +858,7 @@
 
     // Keyboard: Alt+Arrow to move between modules
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") hideLibrary();
       if (e.altKey && e.key === "ArrowRight") { e.preventDefault(); goTo(state.activeIndex + 1); }
       if (e.altKey && e.key === "ArrowLeft") { e.preventDefault(); goTo(state.activeIndex - 1); }
     });

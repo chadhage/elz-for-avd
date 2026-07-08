@@ -27,13 +27,24 @@
       <div class="engagement">
         <input id="engagementName" type="text" placeholder="Engagement / Customer name" aria-label="Engagement name" />
       </div>
-      <button id="btnSave" class="btn btn--ghost" title="Save to this browser">Save</button>
+      <button id="btnNew" class="btn btn--ghost" title="Start a new workshop">New</button>
+      <button id="btnSave" class="btn btn--ghost" title="Save a named copy in this browser">Save</button>
+      <button id="btnOpen" class="btn btn--ghost" title="Open a previously saved workshop">Open</button>
       <button id="btnImport" class="btn btn--ghost" title="Load a saved assessment JSON">Import</button>
       <button id="btnExport" class="btn btn--primary" title="Download the assessment as JSON">Export JSON</button>
       <button id="btnTheme" class="btn btn--icon" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
       <input id="importFile" type="file" accept="application/json" hidden />
     </div>
   </header>
+
+  <!-- ===================== SAVED WORKSHOPS ===================== -->
+  <div id="libraryPanel" class="library" hidden>
+    <div class="library__head">
+      <span class="library__title">Saved workshops</span>
+      <button id="libraryClose" class="btn btn--icon" aria-label="Close saved workshops">✕</button>
+    </div>
+    <div id="libraryList" class="library__list"></div>
+  </div>
 
   <!-- ===================== PROGRESS ===================== -->
   <div class="progress">
