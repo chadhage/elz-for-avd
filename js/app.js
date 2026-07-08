@@ -332,42 +332,46 @@
       '<p class="module__tagline">' + mod.tagline + '</p>';
     view.appendChild(head);
 
-    // Tabs
-    const tabs = el("div", "tabs");
-    const panels = el("div", "panels");
-    const tabDefs = [
-      { key: "overview", label: "Overview & Sources" },
-      { key: "currentState", label: "Current State (as-is)" },
-      { key: "toBeState", label: "Target State (to-be)" }
-    ];
-    tabDefs.forEach((t, ti) => {
-      const btn = el("button", "tab" + (ti === 0 ? " is-active" : ""));
-      btn.type = "button"; btn.textContent = t.label; btn.dataset.tab = t.key;
-      btn.addEventListener("click", () => {
-        tabs.querySelectorAll(".tab").forEach(b => b.classList.remove("is-active"));
-        panels.querySelectorAll(".panel").forEach(p => p.classList.remove("is-active"));
-        btn.classList.add("is-active");
-        panels.querySelector('[data-panel="' + t.key + '"]').classList.add("is-active");
+    if (mod.id === "conclusion") {
+      view.appendChild(renderConclusion(mod));
+    } else {
+      // Tabs
+      const tabs = el("div", "tabs");
+      const panels = el("div", "panels");
+      const tabDefs = [
+        { key: "overview", label: "Overview & Sources" },
+        { key: "currentState", label: "Current State (as-is)" },
+        { key: "toBeState", label: "Target State (to-be)" }
+      ];
+      tabDefs.forEach((t, ti) => {
+        const btn = el("button", "tab" + (ti === 0 ? " is-active" : ""));
+        btn.type = "button"; btn.textContent = t.label; btn.dataset.tab = t.key;
+        btn.addEventListener("click", () => {
+          tabs.querySelectorAll(".tab").forEach(b => b.classList.remove("is-active"));
+          panels.querySelectorAll(".panel").forEach(p => p.classList.remove("is-active"));
+          btn.classList.add("is-active");
+          panels.querySelector('[data-panel="' + t.key + '"]').classList.add("is-active");
+        });
+        tabs.appendChild(btn);
       });
-      tabs.appendChild(btn);
-    });
-    view.appendChild(tabs);
+      view.appendChild(tabs);
 
-    // Overview panel
-    const pOverview = el("div", "panel is-active", { "data-panel": "overview" });
-    const intro = el("div", "prose");
-    intro.innerHTML = renderMarkdown(mod.intro);
-    pOverview.appendChild(intro);
-    panels.appendChild(pOverview);
+      // Overview panel
+      const pOverview = el("div", "panel is-active", { "data-panel": "overview" });
+      const intro = el("div", "prose");
+      intro.innerHTML = renderMarkdown(mod.intro);
+      pOverview.appendChild(intro);
+      panels.appendChild(pOverview);
 
-    // Current state panel
-    panels.appendChild(buildPhasePanel(mod, "currentState",
-      "Record the current (as-is) state. Fields save automatically."));
-    // Target state panel
-    panels.appendChild(buildPhasePanel(mod, "toBeState",
-      "Record the target (to-be) state and the associated design decisions."));
+      // Current state panel
+      panels.appendChild(buildPhasePanel(mod, "currentState",
+        "Record the current (as-is) state. Fields save automatically."));
+      // Target state panel
+      panels.appendChild(buildPhasePanel(mod, "toBeState",
+        "Record the target (to-be) state and the associated design decisions."));
 
-    view.appendChild(panels);
+      view.appendChild(panels);
+    }
 
     renderDock(mod);
     markPhaseMeta(mod);
@@ -387,6 +391,230 @@
     mod[phase].forEach((q, i) => form.appendChild(renderQuestion(mod, phase, q, i)));
     panel.appendChild(form);
     return panel;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Conclusion page + Markdown report
+   * ---------------------------------------------------------------------- */
+  function renderConclusion(mod) {
+    const wrap = el("div", "panels");
+    const panel = el("div", "panel is-active");
+    const intro = el("div", "prose");
+    intro.innerHTML = renderMarkdown(mod.intro);
+    panel.appendChild(intro);
+
+    const actions = el("div", "report__actions");
+    const btnDl = el("button", "btn btn--primary", { type: "button" });
+    btnDl.textContent = "Download Markdown (.md)";
+    const btnPrev = el("button", "btn", { type: "button" });
+    btnPrev.textContent = "Preview report";
+    const btnCopy = el("button", "btn", { type: "button" });
+    btnCopy.textContent = "Copy to clipboard";
+    const btnTests = el("button", "btn", { type: "button" });
+    btnTests.textContent = "Download acceptance tests (.ps1)";
+    actions.appendChild(btnDl); actions.appendChild(btnPrev); actions.appendChild(btnCopy); actions.appendChild(btnTests);
+    panel.appendChild(actions);
+
+    const pre = el("pre", "report__preview");
+    pre.style.display = "none";
+    panel.appendChild(pre);
+
+    btnDl.addEventListener("click", downloadMarkdown);
+    btnPrev.addEventListener("click", () => {
+      if (pre.style.display === "none") {
+        pre.textContent = buildMarkdown();
+        pre.style.display = "block";
+        btnPrev.textContent = "Hide preview";
+      } else {
+        pre.style.display = "none";
+        btnPrev.textContent = "Preview report";
+      }
+    });
+    btnCopy.addEventListener("click", () => {
+      const md = buildMarkdown();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(md).then(
+          () => toast("Report copied to clipboard"),
+          () => toast("Copy failed", true)
+        );
+      } else {
+        toast("Clipboard not available", true);
+      }
+    });
+
+    btnTests.addEventListener("click", downloadAcceptanceTests);
+
+    wrap.appendChild(panel);
+    return wrap;
+  }
+
+  function mdValue(v) {
+    if (v == null) return "_(not answered)_";
+    if (Array.isArray(v)) return v.length ? v.join("; ") : "_(not answered)_";
+    const s = String(v).trim();
+    return s === "" ? "_(not answered)_" : s;
+  }
+
+  function buildMarkdown() {
+    const L = [];
+    const title = state.engagement
+      ? state.engagement + " \u2014 AVD Enterprise-Scale Landing Zone Assessment"
+      : "AVD Enterprise-Scale Landing Zone Assessment";
+    L.push("# " + title);
+    L.push("");
+    L.push("_Current State \u2192 Well Architected \u2192 Target State_");
+    L.push("");
+    L.push("Generated: " + new Date().toISOString());
+    let done = 0, total = 0;
+    MODULES.forEach(m => { const c = moduleCounts(m); done += c.done; total += c.total; });
+    L.push("");
+    L.push("Overall completion: **" + done + "/" + total + "** answered.");
+    L.push("");
+    L.push("---");
+
+    MODULES.filter(m => m.id !== "conclusion").forEach(m => {
+      L.push("");
+      L.push("## " + m.order + ". " + m.title);
+      if (m.tagline) { L.push(""); L.push("_" + m.tagline + "_"); }
+
+      if (m.currentState && m.currentState.length) {
+        L.push("");
+        L.push("### Current State (as-is)");
+        L.push("");
+        m.currentState.forEach((q, i) => {
+          L.push("- **" + questionRef(m, "currentState", i) + " " + q.label + ":** " +
+            mdValue(effectiveValue(m, "currentState", q)));
+        });
+      }
+
+      if (m.references && m.references.length) {
+        L.push("");
+        L.push("### Well-Architected references");
+        L.push("");
+        m.references.forEach(r => {
+          L.push("- [" + r.title + "](" + r.url + ")" + (r.note ? " \u2014 " + r.note : ""));
+        });
+      }
+
+      if (m.toBeState && m.toBeState.length) {
+        L.push("");
+        L.push("### Target State (to-be)");
+        L.push("");
+        m.toBeState.forEach((q, i) => {
+          const flag = isPrepopulated(m, "toBeState", q) ? " _(assumed)_" : "";
+          L.push("- **" + questionRef(m, "toBeState", i) + " " + q.label + ":** " +
+            mdValue(effectiveValue(m, "toBeState", q)) + flag);
+        });
+      }
+
+      L.push("");
+      L.push("---");
+    });
+
+    return L.join("\n");
+  }
+
+  function downloadMarkdown() {
+    const md = buildMarkdown();
+    const blob = new Blob([md], { type: "text/markdown" });
+    const name = "avd-eslz-assessment" +
+      (state.engagement ? "-" + slug(state.engagement) : "") +
+      "-" + new Date().toISOString().slice(0, 10) + ".md";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+    toast("Markdown report downloaded");
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Acceptance tests (Pester) derived from target-state decisions
+   * ---------------------------------------------------------------------- */
+  function psEscape(s) { return String(s).replace(/'/g, "''"); }
+
+  function buildAcceptanceTests() {
+    const L = [];
+    const eng = state.engagement || "AVD Enterprise-Scale Landing Zone";
+    L.push("#Requires -Version 5.1");
+    L.push("<#");
+    L.push(".SYNOPSIS");
+    L.push("  Acceptance tests derived from the target-state (to-be) decisions of the");
+    L.push("  " + eng + " assessment.");
+    L.push(".DESCRIPTION");
+    L.push("  Pester v5 tests. Each 'It' maps to a target-state question by its reference");
+    L.push("  (e.g., 1.T1). Machine-verifiable decisions are emitted as Pending so you can");
+    L.push("  implement the Azure/Gov conformance check; free-text and assumed values are");
+    L.push("  flagged, and questions with no recorded decision are skipped.");
+    L.push("  Run: Invoke-Pester -Path .\\<file>.Tests.ps1 -Output Detailed");
+    L.push("  Generated: " + new Date().toISOString());
+    L.push("#>");
+    L.push("");
+    L.push("BeforeDiscovery {");
+    L.push("    # TODO: establish context for the deployed environment under test, e.g.:");
+    L.push("    # Connect-AzAccount -Environment AzureUSGovernment");
+    L.push("    # Set-AzContext -Subscription '<subscription-id>'");
+    L.push("}");
+    L.push("");
+
+    MODULES.filter(m => m.id !== "conclusion").forEach(m => {
+      const questions = m.toBeState || [];
+      if (!questions.length) return;
+      L.push("Describe '" + psEscape(m.order + ". " + m.title) + "' {");
+      L.push("");
+      L.push("    Context 'Target State (to-be)' {");
+      L.push("");
+      questions.forEach((q, i) => {
+        const ref = questionRef(m, "toBeState", i);
+        const val = effectiveValue(m, "toBeState", q);
+        const answered = isAnswered(val);
+        const assumed = isPrepopulated(m, "toBeState", q);
+        const closed = (q.type === "radio" || q.type === "select" || q.type === "checkbox");
+        const expected = Array.isArray(val) ? val.join("; ") : (val == null ? "" : String(val));
+        const name = "[" + ref + "] " + q.label + (answered ? " = " + expected : "");
+        if (!answered) {
+          L.push("        It '" + psEscape(name) + "' -Skip {");
+          L.push("            Set-ItResult -Skipped -Because 'No target decision recorded (" + ref + ").'");
+          L.push("        }");
+        } else if (!closed) {
+          L.push("        It '" + psEscape(name) + "' -Tag 'Manual' {");
+          L.push("            # Expected (" + ref + "): " + psEscape(expected));
+          L.push("            Set-ItResult -Inconclusive -Because 'Free-text / documentation decision — verify manually.'");
+          L.push("        }");
+        } else if (assumed) {
+          L.push("        It '" + psEscape(name) + "' -Tag 'Assumed' {");
+          L.push("            # Expected (" + ref + ", assumed default): " + psEscape(expected));
+          L.push("            Set-ItResult -Pending -Because 'Prefilled / assumed value — confirm before enforcing.'");
+          L.push("        }");
+        } else {
+          L.push("        It '" + psEscape(name) + "' -Tag 'Conformance' {");
+          L.push("            # Expected (" + ref + "): " + psEscape(expected));
+          L.push("            # TODO: assert the deployed environment matches the expected value above.");
+          L.push("            Set-ItResult -Pending -Because 'Implement Azure conformance check for " + ref + ".'");
+          L.push("        }");
+        }
+        L.push("");
+      });
+      L.push("    }");
+      L.push("}");
+      L.push("");
+    });
+
+    return L.join("\n");
+  }
+
+  function downloadAcceptanceTests() {
+    const ps = buildAcceptanceTests();
+    const blob = new Blob([ps], { type: "text/plain" });
+    const name = "avd-eslz" +
+      (state.engagement ? "-" + slug(state.engagement) : "") +
+      "-acceptance-" + new Date().toISOString().slice(0, 10) + ".Tests.ps1";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+    toast("Acceptance tests downloaded");
   }
 
   /* ---------------------------------------------------------------------- *

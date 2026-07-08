@@ -697,5 +697,45 @@ Export **assessment.json** as the machine-readable design backlog and use it as 
       { id: "next_actions", type: "text", label: "Immediate next actions (comma-separated, owner:date)", placeholder: "e.g., request ER circuit (NetTeam, Aug 1); confirm Gov SKUs (Cloud, Jul 20)" },
       { id: "open_decisions", type: "text", label: "Open decisions to resolve (comma-separated)", placeholder: "e.g., join model, SIEM, GPU need" }
     ]
+  },
+
+  /* ======================================================================= *
+   * 9. CONCLUSION & REPORT
+   * ======================================================================= */
+  {
+    id: "conclusion",
+    order: 9,
+    title: "Conclusion & Report",
+    short: "Conclusion",
+    minutes: 10,
+    icon: "\u25ce",
+    tagline: "Generate the assessment report — current state, Well-Architected references, and target-state decisions.",
+    intro: `
+## Conclusion
+
+This final step consolidates the assessment into a single **Markdown report** you can share, attach to the SSP, or feed into the design backlog.
+
+The generated report includes, for every module:
+
+- **Current State (as-is)** — all captured inputs, keyed by their question number (e.g., \`1.C3\`).
+- **Well-Architected references** — the first-party Microsoft documentation links for that design area.
+- **Target State (to-be)** — the recorded design decisions, with **_(assumed)_** flags on any prefilled values that were not explicitly confirmed.
+
+### How to use
+
+1. Use **Download Markdown (.md)** to save the report locally — it is generated in your browser and never leaves the machine.
+2. Use **Preview report** to review it inline first, or **Copy to clipboard** to paste it elsewhere.
+3. Pair it with the **Export JSON** button (top bar) when you need the machine-readable version.
+4. Use **Download acceptance tests (.ps1)** to emit a Pester test skeleton derived from your target-state decisions — each test is keyed by its \`x.Ty\` reference, with assumed and free-text values flagged.
+
+> Tip: set the **engagement name** in the top bar before generating so it appears in the report title and file name.
+`,
+    references: [
+      { title: "Azure Well-Architected Framework", url: "https://learn.microsoft.com/en-us/azure/well-architected/", note: "The five pillars this assessment maps to." },
+      { title: "AVD enterprise-scale landing zone", url: "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/scenarios/wvd/enterprise-scale-landing-zone", note: "Reference architecture & accelerator." },
+      { title: "AVD in Azure Government", url: "https://learn.microsoft.com/en-us/azure/virtual-desktop/gov/", note: "GCC High / DoD specifics." }
+    ],
+    currentState: [],
+    toBeState: []
   }
 ];
