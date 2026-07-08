@@ -91,7 +91,7 @@
         flushPara(); closeList();
         const lvl = m[1].length;
         html += "<h" + lvl + ">" + inline(m[2]) + "</h" + lvl + ">";
-      } else if ((m = line.match(/^>\s?(.*)$/))) {
+      } else if ((m = line.match(/^&gt;\s?(.*)$/))) {
         flushPara(); closeList();
         html += '<blockquote>' + inline(m[1]) + "</blockquote>";
       } else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) {
