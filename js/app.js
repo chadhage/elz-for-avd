@@ -140,6 +140,23 @@
     return String(v).trim() !== "";
   }
 
+  // A phase ("currentState" | "toBeState") is complete when every question in
+  // that phase across all non-conclusion modules has an answer.
+  function phaseComplete(phase) {
+    return MODULES.filter(m => m.id !== "conclusion").every(m =>
+      (m[phase] || []).every(q => isAnswered(effectiveValue(m, phase, q)))
+    );
+  }
+
+  // Read a single answer (with prepopulation applied) by module/phase/question id.
+  function findAnswer(moduleId, phase, questionId) {
+    const m = MODULES.find(x => x.id === moduleId);
+    if (!m) return null;
+    const q = (m[phase] || []).find(x => x.id === questionId);
+    if (!q) return null;
+    return effectiveValue(m, phase, q);
+  }
+
   /* Prepopulation: a target question may declare `default` (a static assumed
    * value) or `inheritFrom` (carry the matching current-state answer forward).
    * These provide parity with the Current State tab while letting the facilitator
@@ -575,6 +592,53 @@
 
     btnTests.addEventListener("click", downloadAcceptanceTests);
 
+    // --- Parameterized Bicep generator ---------------------------------- *
+    const gen = el("div", "gencard");
+    const currentDone = phaseComplete("currentState");
+    const targetDone = phaseComplete("toBeState");
+
+    const genHead = el("div", "gencard__head");
+    genHead.innerHTML =
+      '<h3 class="gencard__title">Generate AVD workload (Bicep)</h3>' +
+      '<p class="gencard__sub">Download a parameterized Bicep template that provisions the AVD control ' +
+      'plane (host pool, application group, workspace) plus optional session hosts, with parameter ' +
+      'defaults derived from your chosen input source. Credentials are <code>@secure()</code> parameters ' +
+      'with no defaults \u2014 no UPNs, service principals, usernames, or passwords are written into the file.</p>';
+    gen.appendChild(genHead);
+
+    const genRow = el("div", "gencard__row");
+    const sel = el("select", "q__input gencard__select", { id: "bicepSource" });
+    const optW = el("option"); optW.value = "wellArchitected"; optW.textContent = "Well-Architected baseline";
+    sel.appendChild(optW);
+    const optC = el("option");
+    optC.value = "currentState";
+    optC.textContent = "Current State (as-is)" + (currentDone ? "" : " \u2014 incomplete");
+    optC.disabled = !currentDone;
+    sel.appendChild(optC);
+    const optT = el("option");
+    optT.value = "toBeState";
+    optT.textContent = "Target State (to-be)" + (targetDone ? "" : " \u2014 incomplete");
+    optT.disabled = !targetDone;
+    sel.appendChild(optT);
+
+    const btnBicep = el("button", "btn btn--primary", { type: "button" });
+    btnBicep.textContent = "Download Bicep (.bicep)";
+    genRow.appendChild(sel);
+    genRow.appendChild(btnBicep);
+    gen.appendChild(genRow);
+
+    const genNote = el("p", "gencard__note");
+    genNote.textContent = (currentDone && targetDone)
+      ? "All phases complete \u2014 every source is available."
+      : "Current State or Target State is incomplete, so only the Well-Architected baseline"
+        + (currentDone ? " and Current State" : "") + (targetDone ? " and Target State" : "")
+        + " can be generated. Complete every field in a phase to unlock its template.";
+    gen.appendChild(genNote);
+
+    btnBicep.addEventListener("click", () => downloadBicep(sel.value));
+
+    panel.appendChild(gen);
+
     wrap.appendChild(panel);
     return wrap;
   }
@@ -746,6 +810,349 @@
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(a.href);
     toast("Acceptance tests downloaded");
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Bicep generator — parameterized AVD workload
+   * Source of parameter defaults: Well-Architected baseline, Current State,
+   * or Target State. No secrets (UPNs, SPNs, usernames, passwords) are ever
+   * written into the output: credential parameters are @secure() with no
+   * defaults, and only non-sensitive design values are mapped from answers.
+   * ---------------------------------------------------------------------- */
+  const WORKLOAD_VM = {
+    light:  { vmSize: "Standard_D4as_v5",  maxSession: 16, disk: "Premium_LRS", profile: "Light" },
+    medium: { vmSize: "Standard_D4as_v5",  maxSession: 8,  disk: "Premium_LRS", profile: "Medium" },
+    heavy:  { vmSize: "Standard_D8as_v5",  maxSession: 6,  disk: "Premium_LRS", profile: "Heavy" },
+    power:  { vmSize: "Standard_D16as_v5", maxSession: 2,  disk: "Premium_LRS", profile: "Power" }
+  };
+
+  function parseConcurrent(text) {
+    if (!text) return null;
+    const s = String(text);
+    const m = s.match(/([\d,]+)\s*concurrent/i) || s.match(/concurrent[^\d]*([\d,]+)/i);
+    let n;
+    if (m) {
+      n = parseInt(m[1].replace(/,/g, ""), 10);
+    } else {
+      const all = s.match(/[\d,]+/g);
+      if (all && all.length) n = parseInt(all[0].replace(/,/g, ""), 10);
+    }
+    return (n && n > 0) ? n : null;
+  }
+
+  function dominantWorkload() {
+    const b = state.tools && state.tools.bandwidth;
+    if (!b || !b.counts) return null;
+    let best = null, bestN = 0;
+    Object.keys(b.counts).forEach(k => {
+      const n = parseInt(b.counts[k], 10) || 0;
+      if (n > bestN) { bestN = n; best = k; }
+    });
+    return best;
+  }
+
+  function mapLocation(regionArr) {
+    const map = {
+      "US Gov Virginia": "usgovvirginia",
+      "US Gov Arizona": "usgovarizona",
+      "US Gov Texas": "usgovtexas"
+    };
+    if (Array.isArray(regionArr)) {
+      for (let i = 0; i < regionArr.length; i++) { if (map[regionArr[i]]) return map[regionArr[i]]; }
+    }
+    return null;
+  }
+
+  function deriveBicepParams(source) {
+    // Well-Architected baseline: cost- and performance-optimized defaults.
+    const p = {
+      location: "usgovvirginia",
+      hostPoolName: "hp-avd-gcch",
+      hostPoolType: "Pooled",
+      loadBalancerType: "BreadthFirst",
+      maxSessionLimit: 8,
+      personalDesktopAssignmentType: "Automatic",
+      workspaceName: "ws-avd-gcch",
+      appGroupName: "dag-avd-gcch",
+      sessionHostCount: 2,
+      vmSize: "Standard_D4as_v5",
+      osDiskType: "Premium_LRS",
+      useFslogix: true,
+      startVmOnConnect: true,
+      validationEnvironment: false,
+      workloadProfile: "Medium"
+    };
+    if (source === "wellArchitected") return p;
+
+    // Host pool type from the current OS mix (as-is context, either source).
+    const osMix = findAnswer("intro", "currentState", "current_host_os");
+    if (Array.isArray(osMix) && osMix.length) {
+      const multi = osMix.some(o => /multi-session/i.test(o));
+      const personal = osMix.some(o => /single-session|personal/i.test(o));
+      if (multi) {
+        p.hostPoolType = "Pooled";
+      } else if (personal) {
+        p.hostPoolType = "Personal";
+        p.loadBalancerType = "Persistent";
+        p.maxSessionLimit = 1;
+      }
+    }
+
+    // Profile solution.
+    const profile = findAnswer("intro", "currentState", "current_profile_solution");
+    if (profile) p.useFslogix = /fslogix/i.test(profile);
+
+    // Workload sizing from the bandwidth estimator (dominant workload profile).
+    const wl = dominantWorkload();
+    if (wl && WORKLOAD_VM[wl]) {
+      p.vmSize = WORKLOAD_VM[wl].vmSize;
+      p.osDiskType = WORKLOAD_VM[wl].disk;
+      p.workloadProfile = WORKLOAD_VM[wl].profile;
+      if (p.hostPoolType === "Pooled") p.maxSessionLimit = WORKLOAD_VM[wl].maxSession;
+    }
+
+    // Concurrency → session host count.
+    const scaleText = source === "toBeState"
+      ? (findAnswer("intro", "toBeState", "target_scale") || findAnswer("finops", "currentState", "usage_concurrency"))
+      : findAnswer("intro", "currentState", "current_user_count");
+    const concurrent = parseConcurrent(scaleText);
+    if (concurrent) p.sessionHostCount = Math.max(1, Math.ceil(concurrent / p.maxSessionLimit));
+
+    // Region — the target state records an explicit Gov region selection.
+    if (source === "toBeState") {
+      const loc = mapLocation(findAnswer("network", "toBeState", "target_region"));
+      if (loc) p.location = loc;
+    }
+
+    return p;
+  }
+
+  function buildBicep(source) {
+    const p = deriveBicepParams(source);
+    const eng = state.engagement || "AVD Enterprise-Scale Landing Zone";
+    const srcLabel = source === "currentState" ? "Current State (as-is)"
+      : source === "toBeState" ? "Target State (to-be)"
+      : "Well-Architected baseline";
+    const bool = (b) => (b ? "true" : "false");
+    const L = [];
+
+    L.push("// " + "=".repeat(76));
+    L.push("// Azure Virtual Desktop workload \u2014 parameterized Bicep");
+    L.push("// Engagement : " + eng);
+    L.push("// Source     : " + srcLabel);
+    L.push("// Generated  : " + new Date().toISOString());
+    L.push("//");
+    L.push("// SECURITY: This template hardcodes NO secrets. Administrator and domain-join");
+    L.push("// credentials are parameters with no defaults (adminPassword / domainJoinPassword");
+    L.push("// are @secure()). Supply them at deploy time, ideally via a Key Vault reference.");
+    L.push("// Deploy target subscription and resource group are chosen at deploy time and are");
+    L.push("// not embedded here. Example:");
+    L.push("//   az deployment group create -g <rg> -f main.bicep \\");
+    L.push("//     -p adminUsername=<user> adminPassword=<secret> subnetResourceId=<id>");
+    L.push("// " + "=".repeat(76));
+    L.push("");
+    L.push("targetScope = 'resourceGroup'");
+    L.push("");
+    L.push("@description('Azure region for the AVD resources.')");
+    L.push("param location string = '" + p.location + "'");
+    L.push("");
+    L.push("@description('Environment tag applied to all resources.')");
+    L.push("param environmentTag string = 'gcch'");
+    L.push("");
+    L.push("@description('Host pool name.')");
+    L.push("param hostPoolName string = '" + p.hostPoolName + "'");
+    L.push("");
+    L.push("@description('Host pool type.')");
+    L.push("@allowed([ 'Pooled', 'Personal' ])");
+    L.push("param hostPoolType string = '" + p.hostPoolType + "'");
+    L.push("");
+    L.push("@description('Load balancing algorithm (pooled host pools).')");
+    L.push("@allowed([ 'BreadthFirst', 'DepthFirst', 'Persistent' ])");
+    L.push("param loadBalancerType string = '" + p.loadBalancerType + "'");
+    L.push("");
+    L.push("@description('Maximum concurrent sessions per session host (pooled).')");
+    L.push("@minValue(1)");
+    L.push("param maxSessionLimit int = " + p.maxSessionLimit);
+    L.push("");
+    L.push("@description('Assignment type for personal host pools.')");
+    L.push("@allowed([ 'Automatic', 'Direct' ])");
+    L.push("param personalDesktopAssignmentType string = '" + p.personalDesktopAssignmentType + "'");
+    L.push("");
+    L.push("@description('Start VM on connect (cost optimization).')");
+    L.push("param startVmOnConnect bool = " + bool(p.startVmOnConnect));
+    L.push("");
+    L.push("@description('Deploy the host pool as a validation environment.')");
+    L.push("param validationEnvironment bool = " + bool(p.validationEnvironment));
+    L.push("");
+    L.push("@description('Desktop application group name.')");
+    L.push("param appGroupName string = '" + p.appGroupName + "'");
+    L.push("");
+    L.push("@description('Workspace name.')");
+    L.push("param workspaceName string = '" + p.workspaceName + "'");
+    L.push("");
+    L.push("@description('Number of session host VMs to deploy (0 = control plane only).')");
+    L.push("@minValue(0)");
+    L.push("param sessionHostCount int = " + p.sessionHostCount);
+    L.push("");
+    L.push("@description('Session host VM size.')");
+    L.push("param vmSize string = '" + p.vmSize + "'");
+    L.push("");
+    L.push("@description('OS disk storage type.')");
+    L.push("@allowed([ 'Standard_LRS', 'StandardSSD_LRS', 'Premium_LRS' ])");
+    L.push("param osDiskType string = '" + p.osDiskType + "'");
+    L.push("");
+    L.push("@description('Resource ID of the subnet the session hosts attach to. Required when sessionHostCount > 0.')");
+    L.push("param subnetResourceId string = ''");
+    L.push("");
+    L.push("@description('Marketplace image for the session hosts (Windows 11 multi-session + M365 by default).')");
+    L.push("param imageReference object = {");
+    L.push("  publisher: 'microsoftwindowsdesktop'");
+    L.push("  offer: 'office-365'");
+    L.push("  sku: '" + (p.hostPoolType === "Personal" ? "win11-23h2-avd" : "win11-23h2-avd-m365") + "'");
+    L.push("  version: 'latest'");
+    L.push("}");
+    L.push("");
+    L.push("@description('Local administrator user name for the session hosts. No default \u2014 supply at deploy time.')");
+    L.push("param adminUsername string");
+    L.push("");
+    L.push("@secure()");
+    L.push("@description('Local administrator password. No default \u2014 supply securely at deploy time.')");
+    L.push("param adminPassword string");
+    L.push("");
+    L.push("@description('AD DS / Entra Domain Services domain to join (leave empty to skip domain join).')");
+    L.push("param domainToJoin string = ''");
+    L.push("");
+    L.push("@description('UPN of the domain-join account. No default \u2014 supply at deploy time.')");
+    L.push("param domainJoinUserPrincipalName string = ''");
+    L.push("");
+    L.push("@secure()");
+    L.push("@description('Password for the domain-join account. No default \u2014 supply securely at deploy time.')");
+    L.push("param domainJoinPassword string = ''");
+    L.push("");
+    L.push("@description('Base time used to derive the host pool registration token expiry. Do not override.')");
+    L.push("param baseTime string = utcNow('u')");
+    L.push("");
+    L.push("var deploySessionHosts = sessionHostCount > 0 && !empty(subnetResourceId)");
+    L.push("var tokenExpiration = dateTimeAdd(baseTime, 'PT2H')");
+    L.push("var commonTags = {");
+    L.push("  environment: environmentTag");
+    L.push("  workloadProfile: '" + p.workloadProfile + "'");
+    L.push("  source: '" + srcLabel + "'");
+    L.push("}");
+    L.push("");
+    L.push("resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2024-04-03' = {");
+    L.push("  name: hostPoolName");
+    L.push("  location: location");
+    L.push("  tags: commonTags");
+    L.push("  properties: {");
+    L.push("    hostPoolType: hostPoolType");
+    L.push("    loadBalancerType: hostPoolType == 'Pooled' ? loadBalancerType : 'Persistent'");
+    L.push("    maxSessionLimit: maxSessionLimit");
+    L.push("    personalDesktopAssignmentType: hostPoolType == 'Personal' ? personalDesktopAssignmentType : null");
+    L.push("    preferredAppGroupType: 'Desktop'");
+    L.push("    startVMOnConnect: startVmOnConnect");
+    L.push("    validationEnvironment: validationEnvironment");
+    L.push("    registrationInfo: {");
+    L.push("      expirationTime: tokenExpiration");
+    L.push("      registrationTokenOperation: 'Update'");
+    L.push("    }");
+    L.push("  }");
+    L.push("}");
+    L.push("");
+    L.push("resource appGroup 'Microsoft.DesktopVirtualization/applicationGroups@2024-04-03' = {");
+    L.push("  name: appGroupName");
+    L.push("  location: location");
+    L.push("  tags: commonTags");
+    L.push("  properties: {");
+    L.push("    hostPoolArmPath: hostPool.id");
+    L.push("    applicationGroupType: 'Desktop'");
+    L.push("  }");
+    L.push("}");
+    L.push("");
+    L.push("resource workspace 'Microsoft.DesktopVirtualization/workspaces@2024-04-03' = {");
+    L.push("  name: workspaceName");
+    L.push("  location: location");
+    L.push("  tags: commonTags");
+    L.push("  properties: {");
+    L.push("    applicationGroupReferences: [ appGroup.id ]");
+    L.push("  }");
+    L.push("}");
+    L.push("");
+    L.push("resource sessionHostNic 'Microsoft.Network/networkInterfaces@2023-11-01' = [for i in range(0, sessionHostCount): if (deploySessionHosts) {");
+    L.push("  name: '${hostPoolName}-nic-${i}'");
+    L.push("  location: location");
+    L.push("  tags: commonTags");
+    L.push("  properties: {");
+    L.push("    ipConfigurations: [ {");
+    L.push("      name: 'ipconfig'");
+    L.push("      properties: {");
+    L.push("        privateIPAllocationMethod: 'Dynamic'");
+    L.push("        subnet: { id: subnetResourceId }");
+    L.push("      }");
+    L.push("    } ]");
+    L.push("  }");
+    L.push("}]");
+    L.push("");
+    L.push("resource sessionHost 'Microsoft.Compute/virtualMachines@2023-09-01' = [for i in range(0, sessionHostCount): if (deploySessionHosts) {");
+    L.push("  name: '${hostPoolName}-vm-${i}'");
+    L.push("  location: location");
+    L.push("  tags: commonTags");
+    L.push("  properties: {");
+    L.push("    hardwareProfile: { vmSize: vmSize }");
+    L.push("    osProfile: {");
+    L.push("      computerName: '${take(replace(hostPoolName, '-', ''), 11)}${i}'");
+    L.push("      adminUsername: adminUsername");
+    L.push("      adminPassword: adminPassword");
+    L.push("    }");
+    L.push("    storageProfile: {");
+    L.push("      imageReference: imageReference");
+    L.push("      osDisk: {");
+    L.push("        createOption: 'FromImage'");
+    L.push("        managedDisk: { storageAccountType: osDiskType }");
+    L.push("      }");
+    L.push("    }");
+    L.push("    networkProfile: {");
+    L.push("      networkInterfaces: [ { id: sessionHostNic[i].id } ]");
+    L.push("    }");
+    L.push("    licenseType: 'Windows_Client'");
+    L.push("  }");
+    L.push("}]");
+    L.push("");
+    L.push("// NOTE: Domain/Entra join and AVD agent registration are applied to each session");
+    L.push("// host via extensions in your pipeline, using domainToJoin / domainJoinUserPrincipalName /");
+    L.push("// domainJoinPassword and the secure host pool registration token below.");
+    L.push("");
+    L.push("output hostPoolResourceId string = hostPool.id");
+    L.push("output applicationGroupResourceId string = appGroup.id");
+    L.push("output workspaceResourceId string = workspace.id");
+    L.push("");
+    L.push("@secure()");
+    L.push("@description('Host pool registration token for enrolling session hosts.')");
+    L.push("output hostPoolRegistrationToken string = hostPool.properties.registrationInfo.token");
+    L.push("");
+
+    return L.join("\n");
+  }
+
+  function downloadBicep(source) {
+    if ((source === "currentState" && !phaseComplete("currentState")) ||
+        (source === "toBeState" && !phaseComplete("toBeState"))) {
+      toast("That phase is incomplete \u2014 choose Well-Architected or complete the phase.", true);
+      return;
+    }
+    const text = buildBicep(source);
+    const blob = new Blob([text], { type: "text/plain" });
+    const srcSlug = source === "currentState" ? "current-state"
+      : source === "toBeState" ? "target-state" : "well-architected";
+    const name = "avd-workload-" + srcSlug +
+      (state.engagement ? "-" + slug(state.engagement) : "") +
+      "-" + new Date().toISOString().slice(0, 10) + ".bicep";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+    toast("Bicep template downloaded");
   }
 
   /* ---------------------------------------------------------------------- *
