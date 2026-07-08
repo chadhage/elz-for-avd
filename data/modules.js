@@ -734,8 +734,7 @@ The generated report includes, for every module:
 2. Use **Preview report** to review it inline first, or **Copy to clipboard** to paste it elsewhere.
 3. Pair it with the **Export JSON** button (top bar) when you need the machine-readable version.
 4. Use **Download acceptance tests (.ps1)** to emit a Pester test skeleton derived from your target-state decisions — each test is keyed by its \`x.Ty\` reference, with assumed and free-text values flagged.
-5. Use **Generate AVD workload (Bicep)** to download a parameterized template. Pick the input source — **Well-Architected baseline**, **Current State**, or **Target State**. Current State and Target State unlock only when every field in that phase is complete; otherwise the Well-Architected baseline is used. Credentials are \`@secure()\` parameters with no defaults, so no UPNs, service principals, usernames, or passwords are written into the file.
-
+5. Use **Generate AVD workload (Bicep)** to download a parameterized template. Pick the input source — **Well-Architected baseline**, **Current State**, or **Target State**. Current State and Target State unlock only when every field in that phase is complete; otherwise the Well-Architected baseline is used. Credentials are \`@secure()\` parameters with no defaults, so no UPNs, service principals, usernames, or passwords are written into the file.6. Use **Deploy to Azure** to deploy the chosen template instead of downloading it. It uses **device-code sign-in** (\`az login --use-device-code\`) and prompts for every parameter that might be missing \u2014 subscription, resource group, region, subnet, and any overrides \u2014 while the administrator credentials are prompted securely at runtime and never stored.
 > Tip: set the **engagement name** in the top bar before generating so it appears in the report title and file name.
 `,
     references: [

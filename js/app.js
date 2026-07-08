@@ -625,6 +625,9 @@
     btnBicep.textContent = "Download Bicep (.bicep)";
     genRow.appendChild(sel);
     genRow.appendChild(btnBicep);
+    const btnDeploy = el("button", "btn", { type: "button" });
+    btnDeploy.textContent = "Deploy to Azure\u2026";
+    genRow.appendChild(btnDeploy);
     gen.appendChild(genRow);
 
     const genNote = el("p", "gencard__note");
@@ -636,6 +639,7 @@
     gen.appendChild(genNote);
 
     btnBicep.addEventListener("click", () => downloadBicep(sel.value));
+    btnDeploy.addEventListener("click", () => openDeployModal(sel.value));
 
     panel.appendChild(gen);
 
@@ -1153,6 +1157,369 @@
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(a.href);
     toast("Bicep template downloaded");
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Deploy — ARM JSON + device-code deploy command
+   * The static app cannot execute Azure CLI or reach the device-code endpoint
+   * directly (CORS / file:// origin), so "Deploy" produces a self-contained,
+   * one-shot command that signs in with `az login --use-device-code`, embeds
+   * the generated ARM template, prompts for any missing parameters, and runs
+   * `az deployment group create`. Credentials are prompted at runtime by the
+   * command (Read-Host) and are never stored or written into the file.
+   * ---------------------------------------------------------------------- */
+  function sourceLabel(source) {
+    return source === "currentState" ? "Current State (as-is)"
+      : source === "toBeState" ? "Target State (to-be)"
+      : "Well-Architected baseline";
+  }
+
+  function buildArmTemplate(source) {
+    const p = deriveBicepParams(source);
+    const sku = p.hostPoolType === "Personal" ? "win11-23h2-avd" : "win11-23h2-avd-m365";
+    return {
+      "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      languageVersion: "2.0",
+      contentVersion: "1.0.0.0",
+      parameters: {
+        location: { type: "string", defaultValue: p.location, metadata: { description: "Azure region for the AVD resources." } },
+        environmentTag: { type: "string", defaultValue: "gcch" },
+        hostPoolName: { type: "string", defaultValue: p.hostPoolName },
+        hostPoolType: { type: "string", defaultValue: p.hostPoolType, allowedValues: ["Pooled", "Personal"] },
+        loadBalancerType: { type: "string", defaultValue: p.loadBalancerType, allowedValues: ["BreadthFirst", "DepthFirst", "Persistent"] },
+        maxSessionLimit: { type: "int", defaultValue: p.maxSessionLimit, minValue: 1 },
+        personalDesktopAssignmentType: { type: "string", defaultValue: p.personalDesktopAssignmentType, allowedValues: ["Automatic", "Direct"] },
+        startVmOnConnect: { type: "bool", defaultValue: p.startVmOnConnect },
+        validationEnvironment: { type: "bool", defaultValue: p.validationEnvironment },
+        appGroupName: { type: "string", defaultValue: p.appGroupName },
+        workspaceName: { type: "string", defaultValue: p.workspaceName },
+        sessionHostCount: { type: "int", defaultValue: p.sessionHostCount, minValue: 0 },
+        vmSize: { type: "string", defaultValue: p.vmSize },
+        osDiskType: { type: "string", defaultValue: p.osDiskType, allowedValues: ["Standard_LRS", "StandardSSD_LRS", "Premium_LRS"] },
+        subnetResourceId: { type: "string", defaultValue: "" },
+        imageReference: { type: "object", defaultValue: { publisher: "microsoftwindowsdesktop", offer: "office-365", sku: sku, version: "latest" } },
+        adminUsername: { type: "string" },
+        adminPassword: { type: "securestring" },
+        baseTime: { type: "string", defaultValue: "[utcNow('u')]" }
+      },
+      variables: {
+        deploySessionHosts: "[and(greater(parameters('sessionHostCount'), 0), not(empty(parameters('subnetResourceId'))))]",
+        tokenExpiration: "[dateTimeAdd(parameters('baseTime'), 'PT2H')]",
+        commonTags: { environment: "[parameters('environmentTag')]", workloadProfile: p.workloadProfile, source: sourceLabel(source) }
+      },
+      resources: {
+        hostPool: {
+          type: "Microsoft.DesktopVirtualization/hostPools",
+          apiVersion: "2024-04-03",
+          name: "[parameters('hostPoolName')]",
+          location: "[parameters('location')]",
+          tags: "[variables('commonTags')]",
+          properties: {
+            hostPoolType: "[parameters('hostPoolType')]",
+            loadBalancerType: "[if(equals(parameters('hostPoolType'), 'Pooled'), parameters('loadBalancerType'), 'Persistent')]",
+            maxSessionLimit: "[parameters('maxSessionLimit')]",
+            personalDesktopAssignmentType: "[if(equals(parameters('hostPoolType'), 'Personal'), parameters('personalDesktopAssignmentType'), null())]",
+            preferredAppGroupType: "Desktop",
+            startVMOnConnect: "[parameters('startVmOnConnect')]",
+            validationEnvironment: "[parameters('validationEnvironment')]",
+            registrationInfo: { expirationTime: "[variables('tokenExpiration')]", registrationTokenOperation: "Update" }
+          }
+        },
+        appGroup: {
+          type: "Microsoft.DesktopVirtualization/applicationGroups",
+          apiVersion: "2024-04-03",
+          name: "[parameters('appGroupName')]",
+          location: "[parameters('location')]",
+          tags: "[variables('commonTags')]",
+          properties: { hostPoolArmPath: "[resourceId('Microsoft.DesktopVirtualization/hostPools', parameters('hostPoolName'))]", applicationGroupType: "Desktop" },
+          dependsOn: ["hostPool"]
+        },
+        workspace: {
+          type: "Microsoft.DesktopVirtualization/workspaces",
+          apiVersion: "2024-04-03",
+          name: "[parameters('workspaceName')]",
+          location: "[parameters('location')]",
+          tags: "[variables('commonTags')]",
+          properties: { applicationGroupReferences: ["[resourceId('Microsoft.DesktopVirtualization/applicationGroups', parameters('appGroupName'))]"] },
+          dependsOn: ["appGroup"]
+        },
+        sessionHostNic: {
+          copy: { name: "sessionHostNic", count: "[length(range(0, parameters('sessionHostCount')))]" },
+          condition: "[variables('deploySessionHosts')]",
+          type: "Microsoft.Network/networkInterfaces",
+          apiVersion: "2023-11-01",
+          name: "[format('{0}-nic-{1}', parameters('hostPoolName'), range(0, parameters('sessionHostCount'))[copyIndex()])]",
+          location: "[parameters('location')]",
+          tags: "[variables('commonTags')]",
+          properties: {
+            ipConfigurations: [{ name: "ipconfig", properties: { privateIPAllocationMethod: "Dynamic", subnet: { id: "[parameters('subnetResourceId')]" } } }]
+          }
+        },
+        sessionHost: {
+          copy: { name: "sessionHost", count: "[length(range(0, parameters('sessionHostCount')))]" },
+          condition: "[variables('deploySessionHosts')]",
+          type: "Microsoft.Compute/virtualMachines",
+          apiVersion: "2023-09-01",
+          name: "[format('{0}-vm-{1}', parameters('hostPoolName'), range(0, parameters('sessionHostCount'))[copyIndex()])]",
+          location: "[parameters('location')]",
+          tags: "[variables('commonTags')]",
+          properties: {
+            hardwareProfile: { vmSize: "[parameters('vmSize')]" },
+            osProfile: {
+              computerName: "[format('{0}{1}', take(replace(parameters('hostPoolName'), '-', ''), 11), range(0, parameters('sessionHostCount'))[copyIndex()])]",
+              adminUsername: "[parameters('adminUsername')]",
+              adminPassword: "[parameters('adminPassword')]"
+            },
+            storageProfile: {
+              imageReference: "[parameters('imageReference')]",
+              osDisk: { createOption: "FromImage", managedDisk: { storageAccountType: "[parameters('osDiskType')]" } }
+            },
+            networkProfile: { networkInterfaces: [{ id: "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic-{1}', parameters('hostPoolName'), range(0, parameters('sessionHostCount'))[copyIndex()]))]" }] },
+            licenseType: "Windows_Client"
+          },
+          dependsOn: ["[format('sessionHostNic[{0}]', range(0, parameters('sessionHostCount'))[copyIndex()])]"]
+        }
+      },
+      outputs: {
+        hostPoolResourceId: { type: "string", value: "[resourceId('Microsoft.DesktopVirtualization/hostPools', parameters('hostPoolName'))]" },
+        applicationGroupResourceId: { type: "string", value: "[resourceId('Microsoft.DesktopVirtualization/applicationGroups', parameters('appGroupName'))]" },
+        workspaceResourceId: { type: "string", value: "[resourceId('Microsoft.DesktopVirtualization/workspaces', parameters('workspaceName'))]" }
+      }
+    };
+  }
+
+  // Non-secret infrastructure parameters that carry defaults (overridable in the
+  // deploy modal). Credentials are intentionally excluded — they are prompted at
+  // runtime by the generated command and never stored.
+  function deployOverrideParams(source) {
+    const p = deriveBicepParams(source);
+    return [
+      { key: "hostPoolName", label: "Host pool name", value: p.hostPoolName },
+      { key: "hostPoolType", label: "Host pool type", value: p.hostPoolType },
+      { key: "loadBalancerType", label: "Load balancer type", value: p.loadBalancerType },
+      { key: "maxSessionLimit", label: "Max sessions/host", value: p.maxSessionLimit },
+      { key: "personalDesktopAssignmentType", label: "Personal assignment", value: p.personalDesktopAssignmentType },
+      { key: "startVmOnConnect", label: "Start VM on connect", value: p.startVmOnConnect },
+      { key: "validationEnvironment", label: "Validation environment", value: p.validationEnvironment },
+      { key: "appGroupName", label: "App group name", value: p.appGroupName },
+      { key: "workspaceName", label: "Workspace name", value: p.workspaceName },
+      { key: "sessionHostCount", label: "Session host count", value: p.sessionHostCount },
+      { key: "vmSize", label: "VM size", value: p.vmSize },
+      { key: "osDiskType", label: "OS disk type", value: p.osDiskType }
+    ];
+  }
+
+  function buildDeployCommand(source, ctx) {
+    const arm = JSON.stringify(buildArmTemplate(source), null, 2);
+    const L = [];
+    L.push("#Requires -Version 5.1");
+    L.push("<#");
+    L.push(" .SYNOPSIS  Deploy the AVD workload (" + sourceLabel(source) + ") to Azure.");
+    L.push(" Uses device-code sign-in. Credentials are prompted at runtime and are NOT");
+    L.push(" stored in this command. Paste the whole block into a PowerShell terminal");
+    L.push(" that has the Azure CLI (az) installed.");
+    L.push("#>");
+    L.push("$ErrorActionPreference = 'Stop'");
+    L.push("");
+    L.push("# 1) Device-code sign-in to the selected cloud (follow the code + URL shown)");
+    L.push("az cloud set --name " + ctx.cloud);
+    L.push("az login --use-device-code");
+    if (ctx.subscriptionId) {
+      L.push("az account set --subscription '" + psEscape(ctx.subscriptionId) + "'");
+    } else {
+      L.push("# TODO: set your subscription: az account set --subscription '<subscription-id>'");
+    }
+    L.push("");
+    L.push("# 2) Ensure the target resource group exists");
+    L.push("az group create --name '" + psEscape(ctx.resourceGroup || "<resource-group>") + "' --location '" + psEscape(ctx.location) + "' | Out-Null");
+    L.push("");
+    L.push("# 3) Write the generated ARM template to a temp file");
+    L.push("$templateJson = @'");
+    arm.split("\n").forEach(line => L.push(line));
+    L.push("'@");
+    L.push("$templateFile = Join-Path ([IO.Path]::GetTempPath()) ('avd-workload-' + [Guid]::NewGuid().ToString('N') + '.json')");
+    L.push("Set-Content -Path $templateFile -Value $templateJson -Encoding utf8");
+    L.push("");
+    L.push("# 4) Prompt for credentials at runtime (never stored in this command)");
+    L.push("$adminUsername = Read-Host 'Local administrator username for session hosts'");
+    L.push("$adminSecure   = Read-Host 'Local administrator password' -AsSecureString");
+    L.push("$adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminSecure))");
+    L.push("");
+    L.push("# 5) Deploy");
+    const prm = [];
+    prm.push("location='" + psEscape(ctx.location) + "'");
+    (ctx.overrides || []).forEach(o => { prm.push(o.key + "='" + psEscape(String(o.value)) + "'"); });
+    if (ctx.subnetResourceId) prm.push("subnetResourceId='" + psEscape(ctx.subnetResourceId) + "'");
+    const head = "az deployment group create --resource-group '" + psEscape(ctx.resourceGroup || "<resource-group>") +
+      "' --name '" + psEscape(ctx.deploymentName) + "' --template-file $templateFile `";
+    L.push(head);
+    L.push("  --parameters " + prm.join(" ") + " `");
+    L.push("  --parameters \"adminUsername=$adminUsername\" \"adminPassword=$adminPassword\"");
+    L.push("");
+    L.push("Remove-Item $templateFile -Force");
+    return L.join("\n");
+  }
+
+  function openDeployModal(source) {
+    if ((source === "currentState" && !phaseComplete("currentState")) ||
+        (source === "toBeState" && !phaseComplete("toBeState"))) {
+      toast("That phase is incomplete \u2014 choose Well-Architected or complete the phase.", true);
+      return;
+    }
+    const p = deriveBicepParams(source);
+    const overrides = deployOverrideParams(source);
+
+    const overlay = el("div", "modal-overlay");
+    const modal = el("div", "modal");
+    overlay.appendChild(modal);
+
+    const close = () => { document.body.removeChild(overlay); document.removeEventListener("keydown", onKey); };
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+
+    const head = el("div", "modal__head");
+    head.innerHTML =
+      '<h3 class="modal__title">Deploy to Azure \u2014 ' + sourceLabel(source) + '</h3>' +
+      '<p class="modal__sub">Signs in with <code>az login --use-device-code</code> and deploys the generated ' +
+      'AVD template. This browser can\u2019t run Azure CLI, so the app builds a one-shot command \u2014 fill in the ' +
+      'fields below, then copy it into a PowerShell terminal. Administrator credentials are prompted at runtime ' +
+      'by the command and are never stored or written into it.</p>';
+    modal.appendChild(head);
+
+    const form = el("div", "modal__form");
+    modal.appendChild(form);
+
+    const ctx = {
+      cloud: (p.location.indexOf("usgov") === 0) ? "AzureUSGovernment" : "AzureCloud",
+      subscriptionId: "",
+      resourceGroup: "",
+      location: p.location,
+      deploymentName: "avd-" + (source === "currentState" ? "current" : source === "toBeState" ? "target" : "waf") +
+        "-" + new Date().toISOString().slice(0, 16).replace(/[-:T]/g, ""),
+      subnetResourceId: "",
+      overrides: overrides.map(o => ({ key: o.key, label: o.label, value: o.value }))
+    };
+
+    const pre = el("pre", "modal__preview");
+
+    const field = (labelText, help, node) => {
+      const w = el("div", "modal__field");
+      const l = el("label", "modal__label"); l.textContent = labelText;
+      w.appendChild(l);
+      if (help) { const h = el("p", "modal__help"); h.textContent = help; w.appendChild(h); }
+      w.appendChild(node);
+      return w;
+    };
+
+    // Cloud
+    const cloudSel = el("select", "q__input");
+    [["AzureUSGovernment", "Azure Government (GCC High / DoD)"], ["AzureCloud", "Azure Public"]].forEach(([v, t]) => {
+      const o = el("option"); o.value = v; o.textContent = t; if (v === ctx.cloud) o.selected = true; cloudSel.appendChild(o);
+    });
+    cloudSel.addEventListener("change", () => { ctx.cloud = cloudSel.value; refresh(); });
+    form.appendChild(field("Azure cloud", null, cloudSel));
+
+    // Subscription (required)
+    const subIn = el("input", "q__input", { type: "text", placeholder: "00000000-0000-0000-0000-000000000000" });
+    subIn.addEventListener("input", () => { ctx.subscriptionId = subIn.value.trim(); refresh(); });
+    form.appendChild(field("Subscription ID (required)", "The subscription to deploy into.", subIn));
+
+    // Resource group (required)
+    const rgIn = el("input", "q__input", { type: "text", placeholder: "rg-avd-prod" });
+    rgIn.addEventListener("input", () => { ctx.resourceGroup = rgIn.value.trim(); refresh(); });
+    form.appendChild(field("Resource group (required)", "Created if it does not already exist.", rgIn));
+
+    // Location
+    const locIn = el("input", "q__input", { type: "text" });
+    locIn.value = ctx.location;
+    locIn.addEventListener("input", () => { ctx.location = locIn.value.trim(); refresh(); });
+    form.appendChild(field("Location", "Azure region name (e.g., usgovvirginia).", locIn));
+
+    // Deployment name
+    const dnIn = el("input", "q__input", { type: "text" });
+    dnIn.value = ctx.deploymentName;
+    dnIn.addEventListener("input", () => { ctx.deploymentName = dnIn.value.trim(); refresh(); });
+    form.appendChild(field("Deployment name", null, dnIn));
+
+    // Subnet (conditionally required)
+    const subnetIn = el("input", "q__input", { type: "text", placeholder: "/subscriptions/.../subnets/avd" });
+    subnetIn.addEventListener("input", () => { ctx.subnetResourceId = subnetIn.value.trim(); refresh(); });
+    const shc = Number(p.sessionHostCount) || 0;
+    form.appendChild(field("Session host subnet resource ID" + (shc > 0 ? " (required for session hosts)" : " (optional)"),
+      shc > 0 ? "Required to deploy the " + shc + " session host VM(s). Leave empty to deploy the control plane only."
+              : "Only needed when session hosts are deployed.", subnetIn));
+
+    // Advanced overrides
+    const details = el("details", "modal__advanced");
+    const summary = el("summary"); summary.textContent = "Advanced parameters (prefilled from your inputs)";
+    details.appendChild(summary);
+    const grid = el("div", "modal__grid");
+    ctx.overrides.forEach(o => {
+      const inp = el("input", "q__input", { type: "text" });
+      inp.value = String(o.value);
+      inp.addEventListener("input", () => { o.value = inp.value; refresh(); });
+      grid.appendChild(field(o.label, null, inp));
+    });
+    details.appendChild(grid);
+    form.appendChild(details);
+
+    // Credentials note
+    const credNote = el("p", "modal__note");
+    credNote.innerHTML = "The generated command prompts for the <strong>administrator username and password</strong> " +
+      "at runtime (<code>Read-Host</code>) \u2014 no usernames, passwords, UPNs, or service principals are written into it.";
+    form.appendChild(credNote);
+
+    // Preview + actions
+    const previewWrap = el("div", "modal__previewwrap");
+    const previewHead = el("div", "modal__previewhead");
+    previewHead.textContent = "Deploy command (PowerShell + Azure CLI)";
+    previewWrap.appendChild(previewHead);
+    previewWrap.appendChild(pre);
+    modal.appendChild(previewWrap);
+
+    const actions = el("div", "modal__actions");
+    const status = el("span", "modal__status");
+    const btnCopy = el("button", "btn btn--primary", { type: "button" });
+    btnCopy.textContent = "Copy deploy command";
+    const btnDl = el("button", "btn", { type: "button" });
+    btnDl.textContent = "Download .ps1";
+    const btnClose = el("button", "btn", { type: "button" });
+    btnClose.textContent = "Close";
+    actions.appendChild(btnCopy); actions.appendChild(btnDl); actions.appendChild(btnClose); actions.appendChild(status);
+    modal.appendChild(actions);
+
+    function valid() { return ctx.subscriptionId && ctx.resourceGroup && ctx.location; }
+    function refresh() {
+      pre.textContent = buildDeployCommand(source, ctx);
+      const ok = valid();
+      btnCopy.disabled = !ok; btnDl.disabled = !ok;
+      status.textContent = ok ? "" : "Enter subscription ID, resource group, and location to enable.";
+    }
+
+    btnCopy.addEventListener("click", () => {
+      const text = buildDeployCommand(source, ctx);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          () => toast("Deploy command copied \u2014 paste into a PowerShell terminal"),
+          () => toast("Copy failed", true)
+        );
+      } else { toast("Clipboard not available", true); }
+    });
+    btnDl.addEventListener("click", () => {
+      const text = buildDeployCommand(source, ctx);
+      const blob = new Blob([text], { type: "text/plain" });
+      const srcSlug = source === "currentState" ? "current-state" : source === "toBeState" ? "target-state" : "well-architected";
+      const name = "deploy-avd-workload-" + srcSlug + "-" + new Date().toISOString().slice(0, 10) + ".ps1";
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+      toast("Deploy command downloaded");
+    });
+    btnClose.addEventListener("click", close);
+
+    document.body.appendChild(overlay);
+    refresh();
+    subIn.focus();
   }
 
   /* ---------------------------------------------------------------------- *
