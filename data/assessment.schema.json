@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://serco.example/schemas/avd-gcch-landing-zone-assessment.json",
+  "title": "AVD on GCC High — Enterprise-Scale Landing Zone Assessment",
+  "description": "Machine-readable output of the AVD/GCC-High Landing Zone Assessment workshop. Exported by the microsite.",
+  "type": "object",
+  "required": ["schema", "schemaVersion", "generatedAt", "modules"],
+  "properties": {
+    "schema": { "const": "avd-gcch-landing-zone-assessment" },
+    "schemaVersion": { "type": "string", "examples": ["1.0.0"] },
+    "engagement": { "type": ["string", "null"], "description": "Customer / engagement name." },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "summary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "answered", "total"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "answered": { "type": "integer", "minimum": 0 },
+          "total": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "currentState", "toBeState"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "minutes": { "type": "integer" },
+          "currentState": { "$ref": "#/$defs/answerMap" },
+          "toBeState": { "$ref": "#/$defs/answerMap" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "answerMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["label", "value"],
+        "properties": {
+          "label": { "type": "string" },
+          "value": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" } }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

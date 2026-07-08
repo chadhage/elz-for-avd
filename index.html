@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AVD on GCC High &mdash; Enterprise-Scale Landing Zone Assessment Workshop</title>
+  <meta name="description" content="Guided L400 workshop for completing an Azure Enterprise-Scale Landing Zone Assessment for an Azure Virtual Desktop workload on GCC High (Azure Government) with multi-tenant considerations." />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+</head>
+<body data-theme="dark">
+  <!-- ===================== TOP BAR ===================== -->
+  <header class="topbar">
+    <div class="topbar__brand">
+      <div class="topbar__logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="28" height="28" role="img" aria-label="Azure">
+          <path d="M12.5 4 4 26h5.4l1.9-5.3h7.1l-2.8-4.4h-2.9l3-8.4L22.5 26H28L19.5 4z" fill="currentColor"/>
+        </svg>
+      </div>
+      <div class="topbar__titles">
+        <h1>AVD &middot; GCC High &middot; Landing Zone Assessment</h1>
+        <p>Enterprise-Scale &bull; Azure Government &bull; Multi-Tenant &bull; L400 Workshop</p>
+      </div>
+    </div>
+
+    <div class="topbar__actions">
+      <div class="engagement">
+        <input id="engagementName" type="text" placeholder="Engagement / Customer name" aria-label="Engagement name" />
+      </div>
+      <button id="btnSave" class="btn btn--ghost" title="Save to this browser">Save</button>
+      <button id="btnImport" class="btn btn--ghost" title="Load a saved assessment JSON">Import</button>
+      <button id="btnExport" class="btn btn--primary" title="Download the assessment as JSON">Export JSON</button>
+      <button id="btnTheme" class="btn btn--icon" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+      <input id="importFile" type="file" accept="application/json" hidden />
+    </div>
+  </header>
+
+  <!-- ===================== PROGRESS ===================== -->
+  <div class="progress">
+    <div class="progress__bar"><span id="progressFill" class="progress__fill"></span></div>
+    <span id="progressLabel" class="progress__label">0% complete</span>
+  </div>
+
+  <!-- ===================== LAYOUT ===================== -->
+  <div class="layout">
+    <!-- Sidebar / module rail -->
+    <nav class="rail" id="rail" aria-label="Workshop modules"></nav>
+
+    <!-- Main workspace -->
+    <main class="workspace" id="workspace">
+      <section class="module" id="moduleView" aria-live="polite"><!-- rendered by app.js --></section>
+
+      <div class="module-nav">
+        <button id="btnPrev" class="btn btn--ghost">&larr; Previous</button>
+        <div class="module-nav__meta"><span id="moduleTimer">30 min</span> module</div>
+        <button id="btnNext" class="btn btn--primary">Next &rarr;</button>
+      </div>
+    </main>
+
+    <!-- Reference dock (keeps sources in-context, no tab-switching) -->
+    <aside class="dock" id="dock" aria-label="Reference sources">
+      <div class="dock__head">
+        <h3>Authoritative Sources</h3>
+        <button id="btnDockToggle" class="btn btn--icon" aria-label="Collapse references">⇥</button>
+      </div>
+      <div class="dock__body" id="dockBody"></div>
+    </aside>
+  </div>
+
+  <!-- ===================== TOASTS ===================== -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="data/modules.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
