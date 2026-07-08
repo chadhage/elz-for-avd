@@ -309,6 +309,12 @@ select.q__input { cursor: pointer; }
 .gencard__select { max-width: 320px; }
 .gencard__select option:disabled { color: var(--text-dim); }
 .gencard__note { margin: 10px 0 0; font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+.badge-preview {
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+  vertical-align: middle; background: var(--warn); color: #1a1205; border: 1px solid transparent;
+}
+.btn--primary .badge-preview { background: rgba(4, 18, 31, .22); color: inherit; border-color: rgba(4, 18, 31, .28); }
 
 /* ---------- Deploy modal ---------- */
 .modal-overlay {

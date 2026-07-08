@@ -622,11 +622,11 @@
     sel.appendChild(optT);
 
     const btnBicep = el("button", "btn btn--primary", { type: "button" });
-    btnBicep.textContent = "Download Bicep (.bicep)";
+    btnBicep.innerHTML = "Download Bicep (.bicep)<span class=\"badge-preview\">Preview</span>";
     genRow.appendChild(sel);
     genRow.appendChild(btnBicep);
     const btnDeploy = el("button", "btn", { type: "button" });
-    btnDeploy.textContent = "Deploy to Azure\u2026";
+    btnDeploy.innerHTML = "Deploy to Azure\u2026<span class=\"badge-preview\">Preview</span>";
     genRow.appendChild(btnDeploy);
     gen.appendChild(genRow);
 
